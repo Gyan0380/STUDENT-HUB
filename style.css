@@ -117,23 +117,25 @@ nav.bottom .ic{font-size:1.15rem;}
 
 /* 🔥 Mentions & Highlights (Discord Style) 🔥 */
 .mention {
-  color: var(--blue);
+  color: #1d4ed8; 
   font-weight: 700;
-  background: rgba(37, 99, 235, 0.1);
+  background: rgba(37, 99, 235, 0.15); 
   padding: 0 4px;
   border-radius: 4px;
 }
+
 [data-theme="dark"] .mention {
-  background: rgba(59, 130, 246, 0.2);
-  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.25); 
+  color: #bfdbfe; 
 }
 
-/* Jab koi aapko tag kare ya reply kare */
 .msg.mentioned-msg {
-  background: rgba(245, 158, 11, 0.15) !important;
-  border-left: 4px solid var(--amber);
-  margin-left: 8px; /* Thoda alag dikhne ke liye */
+  background: rgba(245, 158, 11, 0.2) !important; 
+  border-left: 4px solid #d97706; 
+  margin-left: 8px; 
 }
+
 [data-theme="dark"] .msg.mentioned-msg {
-  background: rgba(245, 158, 11, 0.25) !important;
+  background: rgba(245, 158, 11, 0.3) !important; 
+  border-left: 4px solid #f59e0b; 
 }
