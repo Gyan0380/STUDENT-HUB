@@ -5,19 +5,45 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
 import {
   doc, getDoc, setDoc, updateDoc, serverTimestamp,
-  collection, addDoc, deleteDoc, query, orderBy, onSnapshot, where, getDocs, limit
+  collection, addDoc, deleteDoc, query, orderBy, onSnapshot, where, getDocs, limit, getCountFromServer
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 const root = document.getElementById('app');
 let currentUser = null;      
 let unsubMessages = null;    
 let replyTo = null;
-let pendingPhoto = null;      // base64 photo staged in the chat composer, cleared after send
+let pendingPhoto = null;
+
+/* ---------------- Background Music Player ---------------- */
+let bgAudio = null;
+let isBgMusicPlaying = false;
+
+function initBgAudio() {
+  if (!bgAudio) {
+    bgAudio = new Audio('https://assets.mixkit.co/music/preview/mixkit-tech-house-vibes-130.mp3');
+    bgAudio.loop = true;
+    bgAudio.volume = 0.4;
+  }
+}
+
+window.toggleBgMusic = function() {
+  initBgAudio();
+  const btn = document.getElementById('bg-music-btn');
+  if (isBgMusicPlaying) {
+    bgAudio.pause();
+    isBgMusicPlaying = false;
+    if (btn) btn.textContent = "🔇 BG Audio: OFF";
+  } else {
+    bgAudio.play().catch(e => console.log("Audio play blocked:", e));
+    isBgMusicPlaying = true;
+    if (btn) btn.textContent = "🔊 BG Audio: ON";
+  }
+};
 
 /* ---------------- Photo / cooldown / retention limits ---------------- */
-const PHOTO_COOLDOWN_MS = 40 * 60 * 1000;  // 1 photo per 40 min per room for normal students (Admin/Owner exempt)
+const PHOTO_COOLDOWN_MS = 30 * 60 * 1000;  
 const MAX_PHOTO_MB = 5;
-const AUTO_DELETE_MS = 72 * 60 * 60 * 1000; // messages + photos auto-clear after 72 hours
+const AUTO_DELETE_MS = 72 * 60 * 60 * 1000; 
 
 function validatePhotoFile(file) {
   if (!file.type || !file.type.startsWith('image/')) return 'Sirf image files allowed hain.';
@@ -25,9 +51,10 @@ function validatePhotoFile(file) {
   return null;
 }
 
-function isAdminOrOwner(u) { return u && (u.role === 'Admin' || u.role === 'Owner'); }
+function isAdminOrOwner(u) {
+  return u && (u.role === 'Admin' || u.role === 'Owner');
+}
 
-// Cooldown state lives on the user's own doc (photoCooldowns.<roomKey> = last-sent ms) so it survives across devices.
 function cooldownRemainingMs(roomKey) {
   const u = currentUser;
   if (isAdminOrOwner(u)) return 0;
@@ -35,6 +62,7 @@ function cooldownRemainingMs(roomKey) {
   if (!last) return 0;
   return Math.max(0, PHOTO_COOLDOWN_MS - (Date.now() - last));
 }
+
 async function markCooldown(roomKey) {
   const u = currentUser;
   if (isAdminOrOwner(u)) return;
@@ -44,13 +72,12 @@ async function markCooldown(roomKey) {
     u.photoCooldowns[roomKey] = Date.now();
   } catch (e) { /* non-fatal */ }
 }
+
 function cooldownText(ms) {
   const mins = Math.ceil(ms / 60000);
-  return `⏳ Photo cooldown active — ${mins} minute${mins === 1 ? '' : 's'} baaki hain.`;
+  return `⚠️ Photo cooldown active – ${mins} minute${mins === 1 ? '' : 's'} baaki hain.`;
 }
 
-// Lazy client-side auto-delete: whoever opens a room first triggers cleanup of anything older than 72h.
-// (A static site with no paid backend can't run a server-side timer — this is the honest equivalent.)
 async function cleanupOldMessages(chatRoomId) {
   try {
     const cutoff = Date.now() - AUTO_DELETE_MS;
@@ -64,9 +91,13 @@ async function cleanupOldMessages(chatRoomId) {
   } catch (e) { /* non-fatal */ }
 }
 
-/* ---------------- Per-room unread tracking (Home screen red dots) ---------------- */
-function roomSeenKey(roomId) { return `studentchat-seen-${currentUser.uid}-${roomId}`; }
-function markRoomSeen(roomId) { localStorage.setItem(roomSeenKey(roomId), String(Date.now())); }
+/* ---------------- Per-room unread tracking ---------------- */
+function roomSeenKey(roomId) {
+  return `studentchat-seen-${currentUser.uid}-${roomId}`;
+}
+function markRoomSeen(roomId) {
+  localStorage.setItem(roomSeenKey(roomId), String(Date.now()));
+}
 async function roomHasUnread(roomId) {
   try {
     const lastSeen = Number(localStorage.getItem(roomSeenKey(roomId)) || 0);
@@ -90,14 +121,20 @@ function maskBadWords(text) {
   if (!bannedWordsList.length) return text;
   let masked = text;
   bannedWordsList.forEach(word => {
-    // Escape special characters just in case
     const safeWord = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    // Word boundary (\b) ensures 'ass' doesn't mask 'class'
     const regex = new RegExp(`\\b${safeWord}\\b`, 'gi');
     masked = masked.replace(regex, '*'.repeat(word.length));
   });
   return masked;
 }
+
+/* ---------------- Community Rules State ---------------- */
+let communityRulesText = "1. Kisi ke saath gaali-galoch ya bullying allowed nahi hai.\n2. Personal details (address, phone number) share na karein.\n3. Sirf apni class ke room mein message bhej sakte ho; doosri class ke rooms read-only hain.\n4. Spam ya baar-baar same message bhejna ban ka reason ban sakta hai.\n5. Admin/Owner ke decisions final hain.";
+onSnapshot(doc(db, "Settings", "CommunityRules"), (snap) => {
+  if (snap.exists() && snap.data().rules) {
+    communityRulesText = snap.data().rules;
+  }
+});
 
 /* ---------------- Tags, classes ---------------- */
 const ALL_CLASSES = Array.from({length:12},(_,i)=>`Class ${i+1}`).concat(['12th Pass / College']);
@@ -135,14 +172,12 @@ function applyTheme(theme) {
 applyTheme(localStorage.getItem('studentchat-theme') || 'light');
 window.setTheme = applyTheme;
 
-/* ---------------- Slugify class names for URLs ---------------- */
 function slugify(str) {
   return String(str || '').toLowerCase().trim()
     .replace(/[^a-z0-9]+/g, '-')   
     .replace(/^-+|-+$/g, '');      
 }
 
-/* ---------------- Age from DOB ---------------- */
 function ageFromDob(dob) {
   if (!dob || dob === 'N/A') return null;
   const birth = new Date(dob);
@@ -404,7 +439,7 @@ function renderHome() {
   const classAccess = (u.classAccess && u.classAccess.length) ? u.classAccess : [u.classLevel || 'Class 9'];
   const classOpts = [...new Set(classAccess)].map(c => `
       <div class="opt" onclick="go('#/chat/${slugify(c)}')">
-        <div class="ic" style="background:#dcfce7; position:relative;">🎓<span class="unread-dot hide" id="dot-${slugify(c)}"></span></div>
+        <div class="ic" style="background:#dcfce7; position:relative;">🎓 <span class="unread-dot hide" id="dot-${slugify(c)}"></span></div>
         <div class="tx"><b>${escapeHtml(c)} Room</b><span>Sirf is class ke students</span></div>
       </div>`).join('');
 
@@ -428,11 +463,11 @@ function renderHome() {
 
     <div class="options">
       <div class="opt" onclick="go('#/chat/global')">
-        <div class="ic" style="background:#dbeafe; position:relative;">🌍<span class="unread-dot hide" id="dot-global"></span></div>
+        <div class="ic" style="background:#dbeafe; position:relative;">🌍 <span class="unread-dot hide" id="dot-global"></span></div>
         <div class="tx"><b>Global Chat</b><span>Sab verified students ke saath</span></div>
       </div>
       <div class="opt" onclick="go('#/chat/anonymous')">
-        <div class="ic" style="background:#ede9fe; position:relative;">🥷<span class="unread-dot hide" id="dot-anonymous"></span></div>
+        <div class="ic" style="background:#ede9fe; position:relative;">🥷 <span class="unread-dot hide" id="dot-anonymous"></span></div>
         <div class="tx"><b>Anonymous Chat</b><span>Naam/DP hidden rehta hai</span></div>
       </div>
       
@@ -443,7 +478,7 @@ function renderHome() {
         <div class="tx"><b>Community Rules</b><span>Chat guidelines padhein</span></div>
       </div>
       <div class="opt" onclick="go('#/suggestions')">
-        <div class="ic" style="background:#e0f2fe;">📬</div>
+        <div class="ic" style="background:#e0f2fe;">💡</div>
         <div class="tx"><b>Suggestion Box</b><span>Apna suggestion Admin tak pahunchayein</span></div>
       </div>
       <div class="opt" onclick="go('#/bug-report')">
@@ -457,11 +492,11 @@ function renderHome() {
 
       ${isAdmin ? `
       <div class="opt" onclick="go('#/chat/admin-room')" style="border-color:#dc2626; background:var(--soft-accent);">
-        <div class="ic" style="background:#fecaca; font-size:1.2rem; position:relative;">🛡️<span class="unread-dot hide" id="dot-admin-room"></span></div>
-        <div class="tx"><b style="color:#dc2626;">Admin Chat Room</b><span>Sirf Admin/Owner ke liye — secret room</span></div>
+        <div class="ic" style="background:#fecaca; font-size:1.2rem; position:relative;">🛡️ <span class="unread-dot hide" id="dot-admin-room"></span></div>
+        <div class="tx"><b style="color:#dc2626;">Admin Chat Room</b><span>Sirf Admin/Owner ke liye – secret room</span></div>
       </div>
       <div class="opt" onclick="go('#/admin')" style="border-color: #dc2626; background: var(--soft-accent);">
-        <div class="ic" style="background:#fecaca; font-size:1.2rem;">🛡️</div>
+        <div class="ic" style="background:#fecaca; font-size:1.2rem;">⚙️</div>
         <div class="tx"><b style="color:#dc2626;">Admin Panel</b><span>Manage users & filters</span></div>
       </div>
       ` : ''}
@@ -486,7 +521,6 @@ function renderHome() {
     } catch (e) { /* ignore */ }
   })();
 
-  // Red dots for rooms with unread activity
   const roomIds = ['global', 'anonymous', ...classAccess.map(slugify), ...(isAdmin ? ['admin-room'] : [])];
   roomIds.forEach(async (rid) => {
     if (await roomHasUnread(rid)) {
@@ -585,16 +619,26 @@ async function renderNotifications() {
 }
 
 function renderRules() {
+  const rulesHtml = communityRulesText.split('\n').map(line => `<li>${escapeHtml(line)}</li>`).join('');
   root.innerHTML = `
-  <header><h1>📜 Community Rules</h1></header>
+  <header><h1>📜 Community Rules</h1><span class="pill" onclick="go('#/home')" style="cursor:pointer;">Home</span></header>
   <main>
     <div class="card">
+      <div style="margin-bottom:16px; border-radius:12px; overflow:hidden; border:1px solid var(--line); position:relative;">
+        <!-- 🔥 VIDEO AUTOPLAY WITH DEFAULT MUTE 🔥 -->
+        <video id="rules-video" autoplay muted loop playsinline style="width:100%; display:block; background:#000;" 
+               src="https://assets.mixkit.co/videos/preview/mixkit-flag-of-india-waving-in-the-wind-41584-large.mp4" 
+               poster="https://images.unsplash.com/photo-1532375810709-75b1da00537c?q=80&w=600&auto=format&fit=crop">
+        </video>
+        
+        <!-- 🔥 CORNER FLOATING CONTROLS (BG SOUND & PLAY/PAUSE) 🔥 -->
+        <div style="position:absolute; bottom:10px; right:10px; display:flex; gap:6px; background:rgba(0,0,0,0.6); padding:6px 10px; border-radius:8px; z-index:10; backdrop-filter:blur(4px);">
+          <button id="vid-play-btn" onclick="toggleVideoPlay()" style="background:var(--blue); border:none; color:#fff; font-size:0.75rem; padding:4px 8px; border-radius:4px; cursor:pointer; font-weight:700;">⏸️ Pause</button>
+          <button id="bg-music-btn" onclick="toggleBgMusic()" style="background:var(--input-bg); border:1px solid var(--line); color:var(--ink); font-size:0.75rem; padding:4px 8px; border-radius:4px; cursor:pointer; font-weight:600;">🔇 BG Audio: OFF</button>
+        </div>
+      </div>
       <ol class="rules-list">
-        <li>Kisi ke saath gaali-galoch ya bullying allowed nahi hai.</li>
-        <li>Personal details (address, phone number) share na karein.</li>
-        <li>Sirf apni class ke room mein message bhej sakte ho; doosri class ke rooms read-only hain.</li>
-        <li>Spam ya baar-baar same message bhejna ban ka reason ban sakta hai.</li>
-        <li>Admin/Owner ke decisions final hain.</li>
+        ${rulesHtml}
       </ol>
       <button class="primary" onclick="go('#/home')">Got it, back to Home</button>
     </div>
@@ -602,15 +646,29 @@ function renderRules() {
   ${navbar('rules')}`;
 }
 
+// Video Play/Pause toggle helper
+window.toggleVideoPlay = function() {
+  const vid = document.getElementById('rules-video');
+  const btn = document.getElementById('vid-play-btn');
+  if (!vid) return;
+  if (vid.paused) {
+    vid.play();
+    if (btn) btn.textContent = "⏸️ Pause";
+  } else {
+    vid.pause();
+    if (btn) btn.textContent = "▶️ Play";
+  }
+};
+
 /* ---------------- SUGGESTION BOX ---------------- */
 function renderSuggestions() {
   const u = currentUser;
   const isAdmin = isAdminOrOwner(u);
   root.innerHTML = `
-  <header><h1>📬 Suggestion Box</h1><span class="pill" onclick="go('#/home')" style="cursor:pointer;">Home</span></header>
+  <header><h1>💡 Suggestion Box</h1><span class="pill" onclick="go('#/home')" style="cursor:pointer;">Home</span></header>
   <main>
     <div class="card">
-      <p style="font-size:.78rem; color:var(--muted); margin-bottom:8px;">Apna suggestion likhein — sirf Admin/Owner isse dekh sakte hain. Photo optional hai${isAdmin ? '' : ' (1 submission har 40 minute mein)'}.</p>
+      <p style="font-size:.78rem; color:var(--muted); margin-bottom:8px;">Apna suggestion likhein – sirf Admin/Owner isse dekh sakte hain. Photo optional hai${isAdmin ? '' : ' (1 submission har 40 minute mein)'}.</p>
       <div id="sugg-err" class="err hide"></div>
       <label>Suggestion</label>
       <textarea id="sugg-text" rows="3" placeholder="Aapka suggestion..."></textarea>
@@ -619,7 +677,7 @@ function renderSuggestions() {
       <button class="primary" id="btn-sugg-submit">Submit</button>
       <div id="sugg-msg" class="hide"></div>
     </div>
-    ${isAdmin ? `<h2 class="section-title" style="margin-top:20px;">All Suggestions</h2><div class="card" id="sugg-list"><div class="loading">Loading…</div></div>` : ''}
+    ${isAdmin ? `<h2 class="section-title" style="margin-top:20px;">All Suggestions</h2><div class="card" id="sugg-list"><div class="loading">Loading...</div></div>` : ''}
   </main>
   ${navbar('')}`;
 
@@ -628,7 +686,7 @@ function renderSuggestions() {
     err.classList.add('hide');
     const text = document.getElementById('sugg-text').value.trim();
     if (!text) { err.textContent = 'Suggestion likhein.'; err.classList.remove('hide'); return; }
-
+    
     const remaining = cooldownRemainingMs('suggestions');
     if (remaining > 0) { err.textContent = cooldownText(remaining); err.classList.remove('hide'); return; }
 
@@ -645,7 +703,7 @@ function renderSuggestions() {
         });
         await markCooldown('suggestions');
         const msg = document.getElementById('sugg-msg');
-        msg.textContent = 'Submitted ✅ Thank you!';
+        msg.textContent = 'Submitted – Thank you!';
         msg.className = 'note';
         msg.classList.remove('hide');
         document.getElementById('sugg-text').value = '';
@@ -683,6 +741,7 @@ async function loadSuggestionsList() {
     box.innerHTML = `<div class="err">Couldn't load: ${escapeHtml(e.message)}</div>`;
   }
 }
+
 window.adminDeleteSuggestion = async (id) => {
   if (!confirm('Delete this suggestion?')) return;
   await deleteDoc(doc(db, "Suggestions", id));
@@ -705,7 +764,7 @@ function renderBugReport() {
       <button class="primary" id="btn-bug-submit">Submit Report</button>
       <div id="bug-msg" class="hide"></div>
     </div>
-    ${isAdmin ? `<h2 class="section-title" style="margin-top:20px;">All Bug Reports</h2><div class="card" id="bug-list"><div class="loading">Loading…</div></div>` : ''}
+    ${isAdmin ? `<h2 class="section-title" style="margin-top:20px;">All Bug Reports</h2><div class="card" id="bug-list"><div class="loading">Loading...</div></div>` : ''}
   </main>
   ${navbar('')}`;
 
@@ -714,11 +773,13 @@ function renderBugReport() {
     err.classList.add('hide');
     const text = document.getElementById('bug-text').value.trim();
     if (!text) { err.textContent = 'Bug description likhein.'; err.classList.remove('hide'); return; }
+    
     const files = Array.from(document.getElementById('bug-photos').files).slice(0, 4);
     for (const f of files) {
       const v = validatePhotoFile(f);
       if (v) { err.textContent = v; err.classList.remove('hide'); return; }
     }
+
     try {
       const photos = [];
       for (const f of files) {
@@ -729,7 +790,7 @@ function renderBugReport() {
         uid: u.uid, username: u.username, text, photos, createdAt: serverTimestamp()
       });
       const msg = document.getElementById('bug-msg');
-      msg.textContent = 'Report submitted ✅ Thank you!';
+      msg.textContent = 'Report submitted – Thank you!';
       msg.className = 'note';
       msg.classList.remove('hide');
       document.getElementById('bug-text').value = '';
@@ -764,6 +825,7 @@ async function loadBugReportsList() {
     box.innerHTML = `<div class="err">Couldn't load: ${escapeHtml(e.message)}</div>`;
   }
 }
+
 window.adminDeleteBug = async (id) => {
   if (!confirm('Delete this bug report?')) return;
   await deleteDoc(doc(db, "BugReports", id));
@@ -775,13 +837,11 @@ function renderChat(chatRoomId) {
   const u = currentUser;
   const room = String(chatRoomId).toLowerCase();
   const isAdmin = isAdminOrOwner(u);
-
-  if (room === 'admin-room' && !isAdmin) { go('#/home'); return; } // secret room — don't even render it for students
+  if (room === 'admin-room' && !isAdmin) { go('#/home'); return; }
 
   const myClasses = ((u.classAccess && u.classAccess.length) ? u.classAccess : [u.classLevel || 'Class 9']).map(slugify);
   const isAnonymous = room.includes('anonymous');
   const isGlobal = room === 'global';
-  
   const timeoutExpiry = u.timeoutExpiry?.toDate ? u.timeoutExpiry.toDate() : (u.timeoutExpiry ? new Date(u.timeoutExpiry) : null);
   const isTimedOut = timeoutExpiry && timeoutExpiry.getTime() > Date.now();
   const isRestricted = (u.isBanned || isTimedOut) && !isAdmin;
@@ -791,7 +851,7 @@ function renderChat(chatRoomId) {
   
   pendingPhoto = null;
   markRoomSeen(room);
-  cleanupOldMessages(room); // lazy 72h auto-delete, whoever opens the room first triggers it
+  cleanupOldMessages(room);
 
   root.innerHTML = `
   <main style="padding-bottom:80px;">
@@ -809,7 +869,7 @@ function renderChat(chatRoomId) {
     ${canChat ? `
       <div class="composer">
         <input id="chat-photo-input" type="file" accept="image/*" class="hide">
-        <button id="btn-attach" type="button" title="Attach photo">📎</button>
+        <button id="btn-attach" type="button" title="Attach photo">📷</button>
         <input id="chat-input" placeholder="Type a message... (@username to tag)">
         <button id="btn-send">➤</button>
       </div>` : `<div class="disabled-note">Read-only mode – send disabled.</div>`}
@@ -820,7 +880,6 @@ function renderChat(chatRoomId) {
     document.getElementById('chat-input').addEventListener('keypress', (e) => {
       if (e.key === 'Enter') sendMsg(chatRoomId, isAnonymous);
     });
-
     document.getElementById('btn-attach').onclick = () => {
       const remaining = cooldownRemainingMs(room);
       if (remaining > 0) { alert(cooldownText(remaining)); return; }
@@ -860,10 +919,9 @@ function renderChat(chatRoomId) {
       const mine = m.senderId === u.uid;
       const canDeleteThis = mine || canDeleteAnyHere; 
       
-      // 🔥 Anti-Abuse Filter & Mention Logic 🔥
       let rawText = m.text || '';
-      rawText = maskBadWords(rawText); // Apply abuse filter first
-      let safeText = escapeHtml(rawText); // Escape HTML securely
+      rawText = maskBadWords(rawText); 
+      let safeText = escapeHtml(rawText); 
       
       const myUname = u.username.toLowerCase();
       const mentionRegex = new RegExp(`@${myUname}(?![\\w.-])`, 'gi'); 
@@ -876,7 +934,7 @@ function renderChat(chatRoomId) {
       
       let extraClass = '';
       if ((isTagged || isRepliedToMe) && !mine) {
-        extraClass = ' mentioned-msg'; // Highlight my message
+        extraClass = ' mentioned-msg'; 
       }
       
       const div = document.createElement('div');
@@ -953,7 +1011,7 @@ function highlightMessage(msgId) {
   setTimeout(() => el.classList.remove('highlight'), 1600);
 }
 
-/* ---------------- Profile viewer (click DP/name in chat) ---------------- */
+/* ---------------- Profile viewer ---------------- */
 async function showProfile(uid) {
   let modal = document.getElementById('profile-modal');
   if (!modal) {
@@ -998,7 +1056,6 @@ async function sendMsg(chatRoomId, isAnonymous) {
 
   const u = currentUser;
   const cooldownBox = document.getElementById('cooldown-note');
-
   if (pendingPhoto && cooldownRemainingMs(room) > 0) {
     cooldownBox.textContent = cooldownText(cooldownRemainingMs(room));
     cooldownBox.classList.remove('hide');
@@ -1037,7 +1094,7 @@ function escapeHtml(str) {
 let adminCustomTags = []; 
 let adminEditUid = null;  
 
-function renderAdmin() {
+async function renderAdmin() {
   const u = currentUser;
   if (u.role !== 'Admin' && u.role !== 'Owner') {
     root.innerHTML = `
@@ -1053,12 +1110,30 @@ function renderAdmin() {
     </main>`;
     return;
   }
+
+  let totalMembersCount = "...";
+  try {
+    const snapCount = await getCountFromServer(collection(db, "Users"));
+    totalMembersCount = snapCount.data().count;
+  } catch (e) { /* ignore */ }
   
   const classChips = ALL_CLASSES.map(c => `<button class="chip-btn" onclick="go('#/chat/${slugify(c)}')">${c}</button>`).join('');
   
   root.innerHTML = `
   <header style="background:#111827;"><h1>🛡️ Admin Panel</h1><span class="pill" onclick="go('#/home')" style="cursor:pointer;">Home</span></header>
   <main>
+    <div class="card" style="margin-bottom:20px; background:var(--profile-grad); text-align:center;">
+      <h3 style="font-size:1.1rem; color:var(--ink);">👥 Total Registered Members: <span style="color:var(--blue); font-weight:900;" id="total-users-count">${totalMembersCount}</span></h3>
+    </div>
+
+    <h2 class="section-title">👥 All Registered Members</h2>
+    <div class="card" style="margin-bottom:20px;">
+      <p style="font-size:.85rem; margin-bottom:10px; color:var(--muted);">Click on a name to view profile, click 'Edit' to manage a to z thing.</p>
+      <div id="all-users-list" style="max-height: 250px; overflow-y: auto; border:1px solid var(--line); border-radius:8px; padding:10px; background:var(--input-bg);">
+        <div class="loading">Loading users...</div>
+      </div>
+    </div>
+
     <h2 class="section-title">Jump into any class chat</h2>
     <div class="card" style="margin-bottom:20px;">
       <p style="font-size:.78rem; color:var(--muted); margin-bottom:10px;">Admin/Owner ko sab class rooms mein access hai – inside a room, aap kisi ka bhi message delete kar sakte ho.</p>
@@ -1069,7 +1144,14 @@ function renderAdmin() {
       </div>
     </div>
 
-    <!-- 🔥 NAYA ANTI-ABUSE FILTER UI 🔥 -->
+    <h2 class="section-title">📜 Edit Community Rules</h2>
+    <div class="card" style="margin-bottom:20px;">
+      <p style="font-size:.78rem; color:var(--muted); margin-bottom:8px;">Yahan rules edit karein, har line ek naya rule banegi.</p>
+      <textarea id="admin-rules-input" rows="6">${escapeHtml(communityRulesText)}</textarea>
+      <button class="primary" id="btn-save-rules" style="margin-top:10px;">Save Rules</button>
+      <div id="rules-msg" class="hide"></div>
+    </div>
+
     <h2 class="section-title">🤬 Anti-Abuse (Bad Words)</h2>
     <div class="card" style="margin-bottom:20px;">
       <p style="font-size:.78rem; color:var(--muted); margin-bottom:12px;">Yahan comma (,) lagakar words add/remove kar sakte ho.</p>
@@ -1098,8 +1180,8 @@ function renderAdmin() {
       <button class="primary" id="btn-notif">Send to Everyone</button>
       <div id="notif-msg" class="hide"></div>
     </div>
-    
-    <h2 class="section-title">📬 Suggestions & 🐛 Bug Reports</h2>
+
+    <h2 class="section-title">💡 Suggestions & 🐛 Bug Reports</h2>
     <div class="card" style="margin-bottom:20px;">
       <p style="font-size:.78rem; color:var(--muted); margin-bottom:10px;">Full list + delete options in-page.</p>
       <div style="display:flex; gap:8px;">
@@ -1107,7 +1189,7 @@ function renderAdmin() {
         <button class="primary" style="margin-top:0; background:var(--red);" onclick="go('#/bug-report')">Open Bug Reports</button>
       </div>
     </div>
-
+    
     <h2 class="section-title">Manage Users (edit any profile)</h2>
     <div class="card" style="margin-bottom:20px;">
       <label>Search by username</label>
@@ -1117,6 +1199,7 @@ function renderAdmin() {
       </div>
       <div id="admin-user-editor"></div>
     </div>
+
     <h2 class="section-title">🏷️ Tags</h2>
     <div class="card" style="margin-bottom:20px;">
       <p style="font-size:.78rem; color:var(--muted); margin-bottom:8px;">Class tags aur Admin tags. Custom tags user ko "Manage Users" se assign karo.</p>
@@ -1129,6 +1212,7 @@ function renderAdmin() {
       <button class="primary" id="btn-create-tag">Create Tag</button>
       <div id="tag-msg" class="hide"></div>
     </div>
+
     ${u.role === 'Owner' ? `
     <h2 class="section-title">Grant / Revoke Admin (Owner only)</h2>
     <div class="card" style="margin-bottom:20px;">
@@ -1142,7 +1226,60 @@ function renderAdmin() {
     </div>` : ''}
   </main>`;
 
-  /* --- Anti-Abuse Logic (SPLIT BY COMMA ADDED) --- */
+  (async () => {
+    try {
+      const snap = await getDocs(query(collection(db, "Users"), orderBy("createdAt", "desc")));
+      const total = snap.size;
+      const countEl = document.getElementById('total-users-count');
+      if (countEl && totalMembersCount === "...") countEl.textContent = total;
+      
+      const listEl = document.getElementById('all-users-list');
+      if (!listEl) return;
+      
+      if (snap.empty) {
+        listEl.innerHTML = '<div class="note">Koi user nahi mila.</div>';
+        return;
+      }
+      
+      listEl.innerHTML = snap.docs.map(d => {
+        const p = d.data();
+        const dateStr = p.createdAt?.toDate ? p.createdAt.toDate().toLocaleDateString('en-IN') : 'N/A';
+        return `
+        <div style="display:flex; justify-content:space-between; align-items:center; padding:8px 0; border-bottom:1px solid var(--line);">
+          <div>
+            <b style="color:var(--blue); cursor:pointer; text-decoration:underline;" onclick="showProfile('${p.uid}')">${escapeHtml(p.fullName || 'Student')}</b>
+            <div style="font-size:.72rem; color:var(--muted); margin-top:2px;">@${escapeHtml(p.username)} • Joined: ${dateStr}</div>
+          </div>
+          <button class="primary" style="width:auto; padding:6px 12px; margin-top:0; font-size:.75rem;" onclick="adminEditUserDirect('${escapeHtml(p.username)}')">Edit</button>
+        </div>`;
+      }).join('');
+    } catch (e) {
+      const listEl = document.getElementById('all-users-list');
+      if (listEl) listEl.innerHTML = `<div class="err">Failed to load users: ${e.message}</div>`;
+    }
+  })();
+  
+  window.adminEditUserDirect = (uname) => {
+    document.getElementById('admin-search-user').value = uname;
+    adminSearchUser();
+    document.getElementById('admin-search-user').scrollIntoView({behavior: 'smooth', block: 'center'});
+  };
+
+  document.getElementById('btn-save-rules').onclick = async () => {
+    const rules = document.getElementById('admin-rules-input').value.trim();
+    const rMsg = document.getElementById('rules-msg');
+    rMsg.classList.remove('hide');
+    try {
+      await setDoc(doc(db, "Settings", "CommunityRules"), { rules }, { merge: true });
+      communityRulesText = rules;
+      rMsg.textContent = "Rules updated successfully ✅";
+      rMsg.className = "note";
+    } catch (e) {
+      rMsg.textContent = "Failed: " + e.message;
+      rMsg.className = "err";
+    }
+  };
+
   window.loadAdminBadWords = () => {
     const box = document.getElementById('bad-words-list');
     if (!box) return;
@@ -1158,33 +1295,25 @@ function renderAdmin() {
   };
   loadAdminBadWords(); 
 
-  // 🔥 ADD MULTIPLE WORDS AT ONCE 🔥
   document.getElementById('btn-add-bad-word').onclick = async () => {
     const inputVal = document.getElementById('new-bad-word').value.trim().toLowerCase();
     if (!inputVal) return;
-    
-    // Comma se split karke extra space hata rahe hain
     const wordsToAdd = inputVal.split(',').map(s => s.trim()).filter(s => s);
     const newList = [...new Set([...bannedWordsList, ...wordsToAdd])];
-    
     await setDoc(doc(db, "Settings", "AntiAbuse"), { words: newList }, { merge: true });
     document.getElementById('new-bad-word').value = '';
   };
 
-  // 🔥 REMOVE MULTIPLE WORDS AT ONCE 🔥
   document.getElementById('btn-remove-bad-word').onclick = async () => {
     const inputVal = document.getElementById('remove-bad-word').value.trim().toLowerCase();
     if (!inputVal) return;
-    
     const wordsToRemove = inputVal.split(',').map(s => s.trim()).filter(s => s);
     const newList = bannedWordsList.filter(word => !wordsToRemove.includes(word));
-    
     await setDoc(doc(db, "Settings", "AntiAbuse"), { words: newList }, { merge: true });
     document.getElementById('remove-bad-word').value = '';
     alert(`Words list se hat gaye hain ✅`);
   };
 
-  /* --- Send notification --- */
   document.getElementById('btn-notif').onclick = async () => {
     const title = document.getElementById('notif-title').value.trim();
     const text = document.getElementById('notif-text').value.trim();
@@ -1205,11 +1334,9 @@ function renderAdmin() {
     msg.classList.remove('hide');
   };
 
-  /* --- Manage users --- */
   document.getElementById('btn-search-user').onclick = () => adminSearchUser();
   document.getElementById('admin-search-user').addEventListener('keypress', (e) => { if (e.key === 'Enter') adminSearchUser(); });
 
-  /* --- Tags --- */
   loadAdminTags();
   document.getElementById('btn-create-tag').onclick = async () => {
     const label = document.getElementById('new-tag-label').value.trim();
@@ -1335,7 +1462,7 @@ async function adminSaveUser(existing) {
     const customTagIds = Array.from(document.querySelectorAll('#e-customtags input:checked')).map(i => i.value);
     
     const tags = classAccess.map(c => makeTag(c, 'class'));
-    tags.push(makeTag('Student', 'student')); // Default base tag for everyone
+    tags.push(makeTag('Student', 'student')); 
     if (role === 'Admin' || role === 'Owner') tags.push(makeTag(role, 'admin'));
     
     customTagIds.forEach(id => {
