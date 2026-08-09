@@ -17,7 +17,6 @@ let replyTo = null;
 let bannedWordsList = [];
 onSnapshot(doc(db, "Settings", "AntiAbuse"), (snap) => {
   bannedWordsList = snap.exists() ? (snap.data().words || []) : [];
-  // Agar admin panel khula hai toh list update kar do
   if (currentPath() === 'admin' && typeof loadAdminBadWords === 'function') {
     loadAdminBadWords();
   }
@@ -573,7 +572,6 @@ function renderChat(chatRoomId) {
       let safeText = escapeHtml(rawText); // Escape HTML securely
       
       const myUname = u.username.toLowerCase();
-      // Regex check: username matching but not followed by another letter
       const mentionRegex = new RegExp(`@${myUname}(?![\\w.-])`, 'gi'); 
       const isTagged = !isAnonymous && mentionRegex.test(safeText);
       const isRepliedToMe = !isAnonymous && m.replyTo && m.replyTo.senderName.toLowerCase() === myUname;
@@ -742,15 +740,24 @@ function renderAdmin() {
       </div>
     </div>
 
-    <!-- 🔥 ANTI-ABUSE FILTER UI 🔥 -->
+    <!-- 🔥 NAYA ANTI-ABUSE FILTER UI 🔥 -->
     <h2 class="section-title">🤬 Anti-Abuse (Bad Words)</h2>
     <div class="card" style="margin-bottom:20px;">
-      <p style="font-size:.78rem; color:var(--muted); margin-bottom:8px;">Jo words yahan daloge, wo chat mein ***** ban jayenge.</p>
-      <div style="display:flex; gap:8px; align-items:center;">
-        <input id="new-bad-word" placeholder="Enter bad word (e.g. mc, bc)" style="flex:1;">
-        <button class="primary" id="btn-add-bad-word" style="margin-top:0; width:auto; padding:10px 16px;">Add Word</button>
+      <p style="font-size:.78rem; color:var(--muted); margin-bottom:12px;">Jo words yahan daloge, wo chat mein ***** ban jayenge.</p>
+      
+      <label>Add Word</label>
+      <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
+        <input id="new-bad-word" placeholder="Type bad word to ADD..." style="flex:1;">
+        <button class="primary" id="btn-add-bad-word" style="margin-top:0; width:auto; padding:10px 16px; background:var(--green);">Add</button>
       </div>
-      <div id="bad-words-list" style="margin-top:12px; display:flex; flex-wrap:wrap; gap:6px;"></div>
+
+      <label>Remove Word</label>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <input id="remove-bad-word" placeholder="Type exact word to REMOVE..." style="flex:1;">
+        <button class="primary" id="btn-remove-bad-word" style="margin-top:0; width:auto; padding:10px 16px; background:var(--red);">Remove</button>
+      </div>
+
+      <div id="bad-words-list" style="margin-top:16px; display:flex; flex-wrap:wrap; gap:6px; border-top: 1px solid var(--line); padding-top: 12px;"></div>
     </div>
 
     <h2 class="section-title">Send Notification</h2>
@@ -805,9 +812,10 @@ function renderAdmin() {
       box.innerHTML = '<span style="font-size:.78rem; color:var(--muted);">Koi word banned nahi hai.</span>';
       return;
     }
+    // Maine yahan se click (✖) hata diya kyunki aapne specifically remove box manga tha.
     box.innerHTML = bannedWordsList.map(w => `
       <span class="tag-chip" style="background:#fee2e2; color:#991b1b; border:1px solid #f87171; display:flex; align-items:center; gap:4px;">
-        ${escapeHtml(w)} <b style="cursor:pointer; font-size:.7rem;" onclick="delBadWord('${escapeHtml(w)}')">✖</b>
+        ${escapeHtml(w)}
       </span>
     `).join('');
   };
@@ -821,9 +829,18 @@ function renderAdmin() {
     document.getElementById('new-bad-word').value = '';
   };
 
-  window.delBadWord = async (word) => {
-    const newList = bannedWordsList.filter(w => w !== word);
+  // NAYA REMOVE BUTTON LOGIC
+  document.getElementById('btn-remove-bad-word').onclick = async () => {
+    const w = document.getElementById('remove-bad-word').value.trim().toLowerCase();
+    if (!w) return;
+    if (!bannedWordsList.includes(w)) {
+      alert(`"${w}" list mein nahi mila!`);
+      return;
+    }
+    const newList = bannedWordsList.filter(word => word !== w);
     await setDoc(doc(db, "Settings", "AntiAbuse"), { words: newList }, { merge: true });
+    document.getElementById('remove-bad-word').value = '';
+    alert(`"${w}" list se hat gaya hai ✅`);
   };
 
   /* --- Send notification --- */
