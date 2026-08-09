@@ -26,7 +26,9 @@ function maskBadWords(text) {
   if (!bannedWordsList.length) return text;
   let masked = text;
   bannedWordsList.forEach(word => {
+    // Escape special characters just in case
     const safeWord = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    // Word boundary (\b) ensures 'ass' doesn't mask 'class'
     const regex = new RegExp(`\\b${safeWord}\\b`, 'gi');
     masked = masked.replace(regex, '*'.repeat(word.length));
   });
@@ -743,17 +745,17 @@ function renderAdmin() {
     <!-- 🔥 NAYA ANTI-ABUSE FILTER UI 🔥 -->
     <h2 class="section-title">🤬 Anti-Abuse (Bad Words)</h2>
     <div class="card" style="margin-bottom:20px;">
-      <p style="font-size:.78rem; color:var(--muted); margin-bottom:12px;">Jo words yahan daloge, wo chat mein ***** ban jayenge.</p>
+      <p style="font-size:.78rem; color:var(--muted); margin-bottom:12px;">Yahan comma (,) lagakar words add/remove kar sakte ho.</p>
       
-      <label>Add Word</label>
+      <label>Add Word(s)</label>
       <div style="display:flex; gap:8px; align-items:center; margin-bottom:12px;">
-        <input id="new-bad-word" placeholder="Type bad word to ADD..." style="flex:1;">
+        <input id="new-bad-word" placeholder="e.g. mc, bc, bsdk" style="flex:1;">
         <button class="primary" id="btn-add-bad-word" style="margin-top:0; width:auto; padding:10px 16px; background:var(--green);">Add</button>
       </div>
 
-      <label>Remove Word</label>
+      <label>Remove Word(s)</label>
       <div style="display:flex; gap:8px; align-items:center;">
-        <input id="remove-bad-word" placeholder="Type exact word to REMOVE..." style="flex:1;">
+        <input id="remove-bad-word" placeholder="e.g. mc, bc" style="flex:1;">
         <button class="primary" id="btn-remove-bad-word" style="margin-top:0; width:auto; padding:10px 16px; background:var(--red);">Remove</button>
       </div>
 
@@ -804,7 +806,7 @@ function renderAdmin() {
     </div>` : ''}
   </main>`;
 
-  /* --- Anti-Abuse Logic --- */
+  /* --- Anti-Abuse Logic (SPLIT BY COMMA ADDED) --- */
   window.loadAdminBadWords = () => {
     const box = document.getElementById('bad-words-list');
     if (!box) return;
@@ -812,35 +814,38 @@ function renderAdmin() {
       box.innerHTML = '<span style="font-size:.78rem; color:var(--muted);">Koi word banned nahi hai.</span>';
       return;
     }
-    // Maine yahan se click (✖) hata diya kyunki aapne specifically remove box manga tha.
     box.innerHTML = bannedWordsList.map(w => `
-      <span class="tag-chip" style="background:#fee2e2; color:#991b1b; border:1px solid #f87171; display:flex; align-items:center; gap:4px;">
+      <span class="tag-chip" style="background:#fee2e2; color:#991b1b; border:1px solid #f87171; display:flex; align-items:center; word-break: break-all;">
         ${escapeHtml(w)}
       </span>
     `).join('');
   };
-  loadAdminBadWords(); // First load
+  loadAdminBadWords(); 
 
+  // 🔥 ADD MULTIPLE WORDS AT ONCE 🔥
   document.getElementById('btn-add-bad-word').onclick = async () => {
-    const w = document.getElementById('new-bad-word').value.trim().toLowerCase();
-    if (!w) return;
-    const newList = [...new Set([...bannedWordsList, w])];
+    const inputVal = document.getElementById('new-bad-word').value.trim().toLowerCase();
+    if (!inputVal) return;
+    
+    // Comma se split karke extra space hata rahe hain
+    const wordsToAdd = inputVal.split(',').map(s => s.trim()).filter(s => s);
+    const newList = [...new Set([...bannedWordsList, ...wordsToAdd])];
+    
     await setDoc(doc(db, "Settings", "AntiAbuse"), { words: newList }, { merge: true });
     document.getElementById('new-bad-word').value = '';
   };
 
-  // NAYA REMOVE BUTTON LOGIC
+  // 🔥 REMOVE MULTIPLE WORDS AT ONCE 🔥
   document.getElementById('btn-remove-bad-word').onclick = async () => {
-    const w = document.getElementById('remove-bad-word').value.trim().toLowerCase();
-    if (!w) return;
-    if (!bannedWordsList.includes(w)) {
-      alert(`"${w}" list mein nahi mila!`);
-      return;
-    }
-    const newList = bannedWordsList.filter(word => word !== w);
+    const inputVal = document.getElementById('remove-bad-word').value.trim().toLowerCase();
+    if (!inputVal) return;
+    
+    const wordsToRemove = inputVal.split(',').map(s => s.trim()).filter(s => s);
+    const newList = bannedWordsList.filter(word => !wordsToRemove.includes(word));
+    
     await setDoc(doc(db, "Settings", "AntiAbuse"), { words: newList }, { merge: true });
     document.getElementById('remove-bad-word').value = '';
-    alert(`"${w}" list se hat gaya hai ✅`);
+    alert(`Words list se hat gaye hain ✅`);
   };
 
   /* --- Send notification --- */
