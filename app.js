@@ -258,7 +258,6 @@ function renderRegister() {
           classLevel: classLevel || "Class 9",
           schoolName: schoolName || "Not Provided",
           profilePhoto: photoBase64 || "https://cdn-icons-png.flaticon.com/512/149/149071.png",
-          schoolIdUrl: "",
           bio: "",
           role: "Student",
           tags: [makeTag(classLevel || "Class 9", 'class'), makeTag('Student', 'student')],
@@ -363,7 +362,7 @@ function renderHome() {
       ${(u.role === 'Admin' || u.role === 'Owner') ? `
       <div class="opt" onclick="go('#/admin')" style="border-color: #dc2626; background: #fff5f5;">
         <div class="ic" style="background:#fecaca; font-size:1.2rem;">🛡️</div>
-        <div class="tx"><b style="color:#dc2626;">Admin Panel</b><span>Manage users, tags & notifications</span></div>
+        <div class="tx"><b style="color:#dc2626;">Admin Panel</b><span>Manage users & tags</span></div>
       </div>
       ` : ''}
 
@@ -525,7 +524,7 @@ function renderChat(chatRoomId) {
     <div id="reply-bar-wrap"></div>
     ${canChat ? `
       <div class="composer">
-        <input id="chat-input" placeholder="Type a message...">
+        <input id="chat-input" placeholder="Type a message... (@username to tag)">
         <button id="btn-send">➤</button>
       </div>` : `<div class="disabled-note">Read-only mode – send disabled.</div>`}
   </div>`;
@@ -549,8 +548,25 @@ function renderChat(chatRoomId) {
       const mine = m.senderId === u.uid;
       const canDeleteThis = mine || canDeleteAnyHere; 
       
+      // 🔥 MENTION & HIGHLIGHT LOGIC 🔥
+      let safeText = escapeHtml(m.text || '');
+      const myUname = u.username.toLowerCase();
+      
+      const mentionRegex = new RegExp(`@${myUname}\\b`, 'gi');
+      const isTagged = !isAnonymous && mentionRegex.test(safeText);
+      const isRepliedToMe = !isAnonymous && m.replyTo && m.replyTo.senderName.toLowerCase() === myUname;
+      
+      if (!isAnonymous) {
+        safeText = safeText.replace(/@([a-zA-Z0-9_.-]+)/g, '<span class="mention">@$1</span>');
+      }
+      
+      let extraClass = '';
+      if ((isTagged || isRepliedToMe) && !mine) {
+        extraClass = ' mentioned-msg';
+      }
+      
       const div = document.createElement('div');
-      div.className = 'msg ' + (mine ? 'right' : 'left');
+      div.className = 'msg ' + (mine ? 'right' : 'left') + extraClass;
       div.id = 'msg-' + d.id;
       div.innerHTML = `
         <div class="msg-head">
@@ -558,7 +574,7 @@ function renderChat(chatRoomId) {
           <span class="sender ${!isAnonymous ? 'clickable' : ''}" ${!isAnonymous ? `data-profile="${m.senderId}"` : ''}>${escapeHtml(m.senderName || 'Student')}</span>
         </div>
         ${m.replyTo ? `<div class="reply-preview" data-jump="${m.replyTo.id || ''}">↩️ <b>${escapeHtml(m.replyTo.senderName||'')}</b>: ${escapeHtml(m.replyTo.text || '').slice(0,40)}</div>` : ''}
-        <div class="msg-text">${escapeHtml(m.text || '')}</div>
+        <div class="msg-text">${safeText}</div>
         <div class="msg-actions">
           <button data-reply="${d.id}">Reply</button>
           ${canDeleteThis ? `<button data-del="${d.id}">Delete${!mine && canDeleteAnyHere ? ' (mod)' : ''}</button>` : ''}
