@@ -626,7 +626,8 @@ function renderRules() {
   <main>
     <div class="card">
       <div class="section-video-container">
-        <video class="section-bg-video" autoplay muted loop playsinline id="rules-video" src="https://assets.mixkit.co/videos/preview/mixkit-flag-of-india-waving-in-the-wind-41584-large.mp4">
+        <video class="section-bg-video" autoplay muted loop playsinline id="rules-video">
+          <source src="7P44RR032Y.mp4" type="video/mp4">
           Your browser does not support the video tag.
         </video>
         <div class="video-controls-bar">
@@ -1504,4 +1505,3 @@ function renderNotFound() {
     </div>
   </main>`;
 }
-
