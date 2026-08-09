@@ -13,6 +13,27 @@ let currentUser = null;
 let unsubMessages = null;    
 let replyTo = null;
 
+/* ---------------- GLOBAL ANTI-ABUSE (Bad Words) ---------------- */
+let bannedWordsList = [];
+onSnapshot(doc(db, "Settings", "AntiAbuse"), (snap) => {
+  bannedWordsList = snap.exists() ? (snap.data().words || []) : [];
+  // Agar admin panel khula hai toh list update kar do
+  if (currentPath() === 'admin' && typeof loadAdminBadWords === 'function') {
+    loadAdminBadWords();
+  }
+});
+
+function maskBadWords(text) {
+  if (!bannedWordsList.length) return text;
+  let masked = text;
+  bannedWordsList.forEach(word => {
+    const safeWord = word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(`\\b${safeWord}\\b`, 'gi');
+    masked = masked.replace(regex, '*'.repeat(word.length));
+  });
+  return masked;
+}
+
 /* ---------------- Tags, classes ---------------- */
 const ALL_CLASSES = Array.from({length:12},(_,i)=>`Class ${i+1}`).concat(['12th Pass / College']);
 
@@ -358,11 +379,10 @@ function renderHome() {
         <div class="tx"><b>Edit Profile</b><span>DP aur bio update karein</span></div>
       </div>
 
-      <!-- 🔥 NAYA ADMIN PANEL BUTTON SIRF OWNER/ADMIN KE LIYE 🔥 -->
       ${(u.role === 'Admin' || u.role === 'Owner') ? `
       <div class="opt" onclick="go('#/admin')" style="border-color: #dc2626; background: #fff5f5;">
         <div class="ic" style="background:#fecaca; font-size:1.2rem;">🛡️</div>
-        <div class="tx"><b style="color:#dc2626;">Admin Panel</b><span>Manage users & tags</span></div>
+        <div class="tx"><b style="color:#dc2626;">Admin Panel</b><span>Manage users & filters</span></div>
       </div>
       ` : ''}
 
@@ -372,7 +392,6 @@ function renderHome() {
 
   document.getElementById('btn-bell').onclick = () => go('#/notifications');
 
-  // Unread notification badge
   (async () => {
     try {
       const snap = await getDocs(query(collection(db, "Notifications"), where("toUid", "in", ["all", u.uid])));
@@ -509,7 +528,7 @@ function renderChat(chatRoomId) {
   const isRestricted = (u.isBanned || isTimedOut) && !isAdmin;
   
   const canChat = (isGlobal || isAnonymous || myClasses.includes(room) || isAdmin) && !isRestricted;
-  const canDeleteAnyHere = isAdmin; // Only admin/owner can delete ANY message
+  const canDeleteAnyHere = isAdmin; 
   
   root.innerHTML = `
   <main style="padding-bottom:80px;">
@@ -541,18 +560,21 @@ function renderChat(chatRoomId) {
   
   unsubMessages = onSnapshot(q, (snap) => {
     const wrap = document.getElementById('msgs');
-    if (!wrap) return; // navigated away
+    if (!wrap) return; 
     wrap.innerHTML = '';
     snap.forEach((d) => {
       const m = d.data();
       const mine = m.senderId === u.uid;
       const canDeleteThis = mine || canDeleteAnyHere; 
       
-      // 🔥 MENTION & HIGHLIGHT LOGIC 🔥
-      let safeText = escapeHtml(m.text || '');
-      const myUname = u.username.toLowerCase();
+      // 🔥 Anti-Abuse Filter & Mention Logic 🔥
+      let rawText = m.text || '';
+      rawText = maskBadWords(rawText); // Apply abuse filter first
+      let safeText = escapeHtml(rawText); // Escape HTML securely
       
-      const mentionRegex = new RegExp(`@${myUname}\\b`, 'gi');
+      const myUname = u.username.toLowerCase();
+      // Regex check: username matching but not followed by another letter
+      const mentionRegex = new RegExp(`@${myUname}(?![\\w.-])`, 'gi'); 
       const isTagged = !isAnonymous && mentionRegex.test(safeText);
       const isRepliedToMe = !isAnonymous && m.replyTo && m.replyTo.senderName.toLowerCase() === myUname;
       
@@ -562,7 +584,7 @@ function renderChat(chatRoomId) {
       
       let extraClass = '';
       if ((isTagged || isRepliedToMe) && !mine) {
-        extraClass = ' mentioned-msg';
+        extraClass = ' mentioned-msg'; // Highlight my message
       }
       
       const div = document.createElement('div');
@@ -719,6 +741,18 @@ function renderAdmin() {
         ${classChips}
       </div>
     </div>
+
+    <!-- 🔥 ANTI-ABUSE FILTER UI 🔥 -->
+    <h2 class="section-title">🤬 Anti-Abuse (Bad Words)</h2>
+    <div class="card" style="margin-bottom:20px;">
+      <p style="font-size:.78rem; color:var(--muted); margin-bottom:8px;">Jo words yahan daloge, wo chat mein ***** ban jayenge.</p>
+      <div style="display:flex; gap:8px; align-items:center;">
+        <input id="new-bad-word" placeholder="Enter bad word (e.g. mc, bc)" style="flex:1;">
+        <button class="primary" id="btn-add-bad-word" style="margin-top:0; width:auto; padding:10px 16px;">Add Word</button>
+      </div>
+      <div id="bad-words-list" style="margin-top:12px; display:flex; flex-wrap:wrap; gap:6px;"></div>
+    </div>
+
     <h2 class="section-title">Send Notification</h2>
     <div class="card" style="margin-bottom:20px;">
       <label>Title</label>
@@ -728,6 +762,7 @@ function renderAdmin() {
       <button class="primary" id="btn-notif">Send to Everyone</button>
       <div id="notif-msg" class="hide"></div>
     </div>
+    
     <h2 class="section-title">Manage Users (edit any profile)</h2>
     <div class="card" style="margin-bottom:20px;">
       <label>Search by username</label>
@@ -761,6 +796,35 @@ function renderAdmin() {
       <div id="grant-msg" class="hide"></div>
     </div>` : ''}
   </main>`;
+
+  /* --- Anti-Abuse Logic --- */
+  window.loadAdminBadWords = () => {
+    const box = document.getElementById('bad-words-list');
+    if (!box) return;
+    if (bannedWordsList.length === 0) {
+      box.innerHTML = '<span style="font-size:.78rem; color:var(--muted);">Koi word banned nahi hai.</span>';
+      return;
+    }
+    box.innerHTML = bannedWordsList.map(w => `
+      <span class="tag-chip" style="background:#fee2e2; color:#991b1b; border:1px solid #f87171; display:flex; align-items:center; gap:4px;">
+        ${escapeHtml(w)} <b style="cursor:pointer; font-size:.7rem;" onclick="delBadWord('${escapeHtml(w)}')">✖</b>
+      </span>
+    `).join('');
+  };
+  loadAdminBadWords(); // First load
+
+  document.getElementById('btn-add-bad-word').onclick = async () => {
+    const w = document.getElementById('new-bad-word').value.trim().toLowerCase();
+    if (!w) return;
+    const newList = [...new Set([...bannedWordsList, w])];
+    await setDoc(doc(db, "Settings", "AntiAbuse"), { words: newList }, { merge: true });
+    document.getElementById('new-bad-word').value = '';
+  };
+
+  window.delBadWord = async (word) => {
+    const newList = bannedWordsList.filter(w => w !== word);
+    await setDoc(doc(db, "Settings", "AntiAbuse"), { words: newList }, { merge: true });
+  };
 
   /* --- Send notification --- */
   document.getElementById('btn-notif').onclick = async () => {
