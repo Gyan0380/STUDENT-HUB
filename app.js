@@ -618,35 +618,31 @@ async function renderNotifications() {
   }
 }
 
+/* ---------------- COMMUNITY RULES WITH BACKGROUND VIDEO ---------------- */
 function renderRules() {
   const rulesHtml = communityRulesText.split('\n').map(line => `<li>${escapeHtml(line)}</li>`).join('');
   root.innerHTML = `
   <header><h1>📜 Community Rules</h1><span class="pill" onclick="go('#/home')" style="cursor:pointer;">Home</span></header>
   <main>
     <div class="card">
-      <div style="margin-bottom:16px; border-radius:12px; overflow:hidden; border:1px solid var(--line); position:relative;">
-        <!-- 🔥 VIDEO AUTOPLAY WITH DEFAULT MUTE 🔥 -->
-        <video id="rules-video" autoplay muted loop playsinline style="width:100%; display:block; background:#000;" 
-               src="https://assets.mixkit.co/videos/preview/mixkit-flag-of-india-waving-in-the-wind-41584-large.mp4" 
-               poster="https://images.unsplash.com/photo-1532375810709-75b1da00537c?q=80&w=600&auto=format&fit=crop">
+      <div class="section-video-container">
+        <video class="section-bg-video" autoplay muted loop playsinline id="rules-video" src="https://assets.mixkit.co/videos/preview/mixkit-flag-of-india-waving-in-the-wind-41584-large.mp4">
+          Your browser does not support the video tag.
         </video>
-        
-        <!-- 🔥 CORNER FLOATING CONTROLS (BG SOUND & PLAY/PAUSE) 🔥 -->
-        <div style="position:absolute; bottom:10px; right:10px; display:flex; gap:6px; background:rgba(0,0,0,0.6); padding:6px 10px; border-radius:8px; z-index:10; backdrop-filter:blur(4px);">
-          <button id="vid-play-btn" onclick="toggleVideoPlay()" style="background:var(--blue); border:none; color:#fff; font-size:0.75rem; padding:4px 8px; border-radius:4px; cursor:pointer; font-weight:700;">⏸️ Pause</button>
-          <button id="bg-music-btn" onclick="toggleBgMusic()" style="background:var(--input-bg); border:1px solid var(--line); color:var(--ink); font-size:0.75rem; padding:4px 8px; border-radius:4px; cursor:pointer; font-weight:600;">🔇 BG Audio: OFF</button>
+        <div class="video-controls-bar">
+          <button id="vid-play-btn" onclick="toggleVideoPlay()" type="button">⏸️ Pause</button>
+          <button id="vid-audio-btn" onclick="toggleVideoAudio()" type="button">🔇 Audio: OFF</button>
         </div>
       </div>
       <ol class="rules-list">
         ${rulesHtml}
       </ol>
-      <button class="primary" onclick="go('#/home')">Got it, back to Home</button>
+      <button class="primary" onclick="go('#/home')" style="margin-top:16px;">Got it, back to Home</button>
     </div>
   </main>
   ${navbar('rules')}`;
 }
 
-// Video Play/Pause toggle helper
 window.toggleVideoPlay = function() {
   const vid = document.getElementById('rules-video');
   const btn = document.getElementById('vid-play-btn');
@@ -657,6 +653,16 @@ window.toggleVideoPlay = function() {
   } else {
     vid.pause();
     if (btn) btn.textContent = "▶️ Play";
+  }
+};
+
+window.toggleVideoAudio = function() {
+  const vid = document.getElementById('rules-video');
+  const btn = document.getElementById('vid-audio-btn');
+  if (!vid) return;
+  vid.muted = !vid.muted;
+  if (btn) {
+    btn.textContent = vid.muted ? "🔇 Audio: OFF" : "🔊 Audio: ON";
   }
 };
 
@@ -1498,3 +1504,4 @@ function renderNotFound() {
     </div>
   </main>`;
 }
+
