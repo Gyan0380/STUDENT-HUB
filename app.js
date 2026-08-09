@@ -9,16 +9,15 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-firestore.js";
 
 const root = document.getElementById('app');
-let currentUser = null;      // Firestore user doc (+ uid)
-let unsubMessages = null;    // active chat listener, torn down on nav
+let currentUser = null;      
+let unsubMessages = null;    
 let replyTo = null;
 
-/* ---------------- Tags, classes, subjects ---------------- */
+/* ---------------- Tags, classes ---------------- */
 const ALL_CLASSES = Array.from({length:12},(_,i)=>`Class ${i+1}`).concat(['12th Pass / College']);
-const SUBJECTS = ['Mathematics','Physics','Chemistry','Biology','English','Hindi','Social Science','History','Geography','Political Science','Economics','Computer Science','Accountancy','Business Studies','Physical Education','Sanskrit','Environmental Science','Statistics','Psychology','Sociology','Fine Arts'];
 
 const TAG_COLORS = {
-  class:'#6366f1', teacher:'#16a34a', principal:'#d97706', admin:'#dc2626', student:'#6b7280'
+  class:'#6366f1', admin:'#dc2626', student:'#6b7280'
 };
 const SUBJECT_PALETTE = ['#0ea5e9','#8b5cf6','#ec4899','#f59e0b','#10b981','#ef4444','#3b82f6','#a855f7','#14b8a6','#f97316'];
 
@@ -53,8 +52,8 @@ window.setTheme = applyTheme;
 /* ---------------- Slugify class names for URLs ---------------- */
 function slugify(str) {
   return String(str || '').toLowerCase().trim()
-    .replace(/[^a-z0-9]+/g, '-')   // any run of non-alphanumeric -> single dash
-    .replace(/^-+|-+$/g, '');      // trim leading/trailing dashes
+    .replace(/[^a-z0-9]+/g, '-')   
+    .replace(/^-+|-+$/g, '');      
 }
 
 /* ---------------- Age from DOB ---------------- */
@@ -100,7 +99,7 @@ function route() {
   const path = currentPath();
   const chatMatch = path.match(/^\/chat\/([a-z0-9-]+)$/i);
   
-  const protectedPages = ['/home', '/start', '/rules', '/admin', '/notifications', '/apply-teacher'];
+  const protectedPages = ['/home', '/start', '/rules', '/admin', '/notifications'];
   if ((protectedPages.includes(path) || chatMatch) && !currentUser) {
     return go('#/login');
   }
@@ -113,7 +112,6 @@ function route() {
   if (path === '/rules') return renderRules();
   if (path === '/admin') return renderAdmin();
   if (path === '/notifications') return renderNotifications();
-  if (path === '/apply-teacher') return renderApplyTeacher();
   if (chatMatch) return renderChat(chatMatch[1]);
   if (path === '/' || path === '') return go('#/login');
   
@@ -265,8 +263,6 @@ function renderRegister() {
           role: "Student",
           tags: [makeTag(classLevel || "Class 9", 'class'), makeTag('Student', 'student')],
           classAccess: [classLevel || "Class 9"],
-          isTeacher: false,
-          teacherClasses: [],
           createdAt: serverTimestamp(),
           isBanned: false,
           timeoutExpiry: null
@@ -321,7 +317,7 @@ function renderHome() {
   const classOpts = [...new Set(classAccess)].map(c => `
       <div class="opt" onclick="go('#/chat/${slugify(c)}')">
         <div class="ic" style="background:#dcfce7;">🎓</div>
-        <div class="tx"><b>${escapeHtml(c)} Room</b><span>${u.isTeacher && (u.teacherClasses||[]).includes(c) ? 'Teaching access – aap yahan delete bhi kar sakte ho' : 'Sirf is class ke students'}</span></div>
+        <div class="tx"><b>${escapeHtml(c)} Room</b><span>Sirf is class ke students</span></div>
       </div>`).join('');
 
   root.innerHTML = `
@@ -362,16 +358,12 @@ function renderHome() {
         <div class="ic" style="background:#f3e8ff;">✏️</div>
         <div class="tx"><b>Edit Profile</b><span>DP aur bio update karein</span></div>
       </div>
-      <div class="opt" id="opt-apply-teacher" onclick="go('#/apply-teacher')">
-        <div class="ic" style="background:#fee2e2;">🍎</div>
-        <div class="tx"><b id="apply-teacher-label">Apply for Teacher</b><span id="apply-teacher-sub">School Teacher ID ke saath apply karein</span></div>
-      </div>
 
       <!-- 🔥 NAYA ADMIN PANEL BUTTON SIRF OWNER/ADMIN KE LIYE 🔥 -->
       ${(u.role === 'Admin' || u.role === 'Owner') ? `
       <div class="opt" onclick="go('#/admin')" style="border-color: #dc2626; background: #fff5f5;">
         <div class="ic" style="background:#fecaca; font-size:1.2rem;">🛡️</div>
-        <div class="tx"><b style="color:#dc2626;">Admin Panel</b><span>Manage users, tags & applications</span></div>
+        <div class="tx"><b style="color:#dc2626;">Admin Panel</b><span>Manage users, tags & notifications</span></div>
       </div>
       ` : ''}
 
@@ -393,23 +385,6 @@ function renderHome() {
       });
       const badge = document.getElementById('notif-badge');
       if (badge && unread > 0) { badge.textContent = unread > 9 ? '9+' : String(unread); badge.classList.remove('hide'); }
-    } catch (e) { /* ignore */ }
-  })();
-
-  // Teacher application status
-  (async () => {
-    const opt = document.getElementById('opt-apply-teacher');
-    if (!opt) return;
-    if (u.isTeacher) { opt.classList.add('hide'); return; }
-    try {
-      const snap = await getDocs(query(collection(db, "TeacherApplications"), where("uid", "==", u.uid), where("status", "==", "pending")));
-      if (!snap.empty) {
-        opt.onclick = null;
-        document.getElementById('apply-teacher-label').textContent = 'Teacher Application Pending';
-        document.getElementById('apply-teacher-sub').textContent = 'Admin approval ka wait karein';
-        opt.style.opacity = '.7';
-        opt.style.cursor = 'default';
-      }
     } catch (e) { /* ignore */ }
   })();
 }
@@ -521,74 +496,6 @@ function renderRules() {
   ${navbar('rules')}`;
 }
 
-/* ---------------- APPLY FOR TEACHER ---------------- */
-function renderApplyTeacher() {
-  const u = currentUser;
-  root.innerHTML = `
-  <header><h1>🍎 Apply for Teacher</h1><span class="pill" onclick="go('#/home')" style="cursor:pointer;">Home</span></header>
-  <main>
-    <div class="card">
-      <div id="err" class="err hide"></div>
-      <p style="font-size:.78rem; color:var(--muted); margin-bottom:6px;">Sab fields compulsory hain (ID card ke ilava).</p>
-      <label>Name</label>
-      <input id="t-name" value="${escapeHtml(u.fullName || '')}">
-      <label>Class (select all you want to teach)</label>
-      <div class="multi-select" id="t-classes">
-        ${ALL_CLASSES.map(c => `<label class="check-row"><input type="checkbox" value="${escapeHtml(c)}"> ${escapeHtml(c)}</label>`).join('')}
-      </div>
-      <label>Subject (search & select multiple)</label>
-      <input id="t-subject-search" placeholder="Search subject...">
-      <div class="multi-select" id="t-subjects">
-        ${SUBJECTS.map(s => `<label class="check-row" data-subject-row><input type="checkbox" value="${escapeHtml(s)}"> ${escapeHtml(s)}</label>`).join('')}
-      </div>
-      <label>School Name</label>
-      <input id="t-school" placeholder="DAV Public School">
-      <label>School Teacher ID Card (photo)</label>
-      <input id="t-idcard" type="file" accept="image/*">
-      <button class="primary" id="btn-apply-teacher">Submit Application</button>
-    </div>
-  </main>
-  ${navbar('')}`;
-  
-  document.getElementById('t-subject-search').addEventListener('input', (e) => {
-    const q = e.target.value.trim().toLowerCase();
-    document.querySelectorAll('#t-subjects [data-subject-row]').forEach(row => {
-      row.style.display = row.textContent.toLowerCase().includes(q) ? '' : 'none';
-    });
-  });
-  
-  document.getElementById('btn-apply-teacher').onclick = () => {
-    const err = document.getElementById('err');
-    err.classList.add('hide');
-    const name = document.getElementById('t-name').value.trim();
-    const school = document.getElementById('t-school').value.trim();
-    const classes = Array.from(document.querySelectorAll('#t-classes input:checked')).map(i => i.value);
-    const subjects = Array.from(document.querySelectorAll('#t-subjects input:checked')).map(i => i.value);
-    const file = document.getElementById('t-idcard').files[0];
-    
-    const fail = (m) => { alert('Please fill: ' + m); err.textContent = m + ' is required.'; err.classList.remove('hide'); };
-    if (!name) return fail('Name');
-    if (!classes.length) return fail('Class (at least one)');
-    if (!subjects.length) return fail('Subject (at least one)');
-    if (!school) return fail('School Name');
-    if (!file) return fail('School Teacher ID Card');
-    
-    processImageToBase64(file, 600, 0.6, async (idCardBase64) => {
-      try {
-        await addDoc(collection(db, "TeacherApplications"), {
-          uid: u.uid, username: u.username, name, classes, subjects, schoolName: school,
-          idCardPhoto: idCardBase64, status: 'pending', createdAt: serverTimestamp()
-        });
-        alert('Application submitted! Admin approval ka wait karein.');
-        go('#/home');
-      } catch (e) {
-        err.textContent = 'Submit failed: ' + e.message;
-        err.classList.remove('hide');
-      }
-    });
-  };
-}
-
 /* ---------------- CHAT ---------------- */
 function renderChat(chatRoomId) {
   const u = currentUser;
@@ -597,15 +504,13 @@ function renderChat(chatRoomId) {
   const isAnonymous = room.includes('anonymous');
   const isGlobal = room === 'global';
   const isAdmin = u.role === 'Admin' || u.role === 'Owner';
-  const myTeacherClasses = (u.teacherClasses || []).map(slugify);
-  const isTeacherHere = u.isTeacher && myTeacherClasses.includes(room);
   
   const timeoutExpiry = u.timeoutExpiry?.toDate ? u.timeoutExpiry.toDate() : (u.timeoutExpiry ? new Date(u.timeoutExpiry) : null);
   const isTimedOut = timeoutExpiry && timeoutExpiry.getTime() > Date.now();
   const isRestricted = (u.isBanned || isTimedOut) && !isAdmin;
   
   const canChat = (isGlobal || isAnonymous || myClasses.includes(room) || isAdmin) && !isRestricted;
-  const canDeleteAnyHere = isAdmin || isTeacherHere; // teachers can moderate their assigned class rooms too
+  const canDeleteAnyHere = isAdmin; // Only admin/owner can delete ANY message
   
   root.innerHTML = `
   <main style="padding-bottom:80px;">
@@ -642,7 +547,7 @@ function renderChat(chatRoomId) {
     snap.forEach((d) => {
       const m = d.data();
       const mine = m.senderId === u.uid;
-      const canDeleteThis = mine || canDeleteAnyHere; // admin/teacher-in-their-class can delete ANY message here
+      const canDeleteThis = mine || canDeleteAnyHere; 
       
       const div = document.createElement('div');
       div.className = 'msg ' + (mine ? 'right' : 'left');
@@ -660,13 +565,11 @@ function renderChat(chatRoomId) {
         </div>`;
       wrap.appendChild(div);
       
-      // Reply: remember original message id too, so we can jump+highlight it later
       div.querySelector('[data-reply]').onclick = () => {
         replyTo = { id: d.id, text: m.text, senderName: m.senderName };
         document.getElementById('reply-bar-wrap').innerHTML = 
           `<div class="reply-bar"><span>↩️ Replying to <b>${escapeHtml(m.senderName)}</b></span><button id="cancel-reply">✖</button></div>`;
         document.getElementById('cancel-reply').onclick = () => { replyTo = null; document.getElementById('reply-bar-wrap').innerHTML = ''; };
-        // Highlight the message being replied to, for both people in the thread
         highlightMessage(d.id);
       };
       
@@ -675,14 +578,12 @@ function renderChat(chatRoomId) {
         if (confirm('Delete this message?')) await deleteDoc(doc(db, "Chats", chatRoomId, "Messages", d.id));
       };
       
-      // Click the reply-preview quote to jump to + highlight the original message
       const jumpEl = div.querySelector('[data-jump]');
       if (jumpEl && m.replyTo?.id) {
         jumpEl.style.cursor = 'pointer';
         jumpEl.onclick = () => highlightMessage(m.replyTo.id);
       }
       
-      // Click avatar/name to view that person's profile (disabled in Anonymous rooms)
       if (!isAnonymous) {
         div.querySelectorAll('[data-profile]').forEach(el => {
           el.onclick = () => showProfile(m.senderId);
@@ -768,8 +669,8 @@ function escapeHtml(str) {
 }
 
 /* ---------------- ADMIN ---------------- */
-let adminCustomTags = []; // cached custom tags loaded when admin panel opens
-let adminEditUid = null;  // uid currently loaded in the user editor
+let adminCustomTags = []; 
+let adminEditUid = null;  
 
 function renderAdmin() {
   const u = currentUser;
@@ -780,10 +681,7 @@ function renderAdmin() {
         <b>Access denied.</b>
         <p style="font-size:.82rem; color:var(--muted); margin-top:8px;">
           Aapka account "${escapeHtml(u.role || 'Student')}" role pe hai. Admin panel dekhne ke liye
-          role Firestore mein "Admin" ya "Owner" hona chahiye – koi bhi apne aap ko admin nahi bana sakta
-          (security ke liye). Pehli baar kisi ko Owner banane ke liye Firebase Console > Firestore > 
-          <code>Users/${u.uid}</code> document kholo aur field <code>role</code> ko manually
-          <code>"Owner"</code> set karo. Uske baad woh Owner is Admin panel se doosron ko Admin bana sakta hai.
+          role Firestore mein "Admin" ya "Owner" hona chahiye.
         </p>
         <button class="primary" onclick="go('#/home')">Back to Home</button>
       </div>
@@ -814,10 +712,6 @@ function renderAdmin() {
       <button class="primary" id="btn-notif">Send to Everyone</button>
       <div id="notif-msg" class="hide"></div>
     </div>
-    <h2 class="section-title">👨‍🏫 Teacher Applications</h2>
-    <div class="card" style="margin-bottom:20px;" id="teacher-apps-list">
-      <div class="loading">Loading...</div>
-    </div>
     <h2 class="section-title">Manage Users (edit any profile)</h2>
     <div class="card" style="margin-bottom:20px;">
       <label>Search by username</label>
@@ -829,7 +723,7 @@ function renderAdmin() {
     </div>
     <h2 class="section-title">🏷️ Tags</h2>
     <div class="card" style="margin-bottom:20px;">
-      <p style="font-size:.78rem; color:var(--muted); margin-bottom:8px;">Class tags (Class 1-12 / Pass) sab ek hi color share karte hain. Teacher/Principal/Admin/Student aur custom tags sab ke apne-apne colors hain. Custom tags user ko "Manage Users" se assign karo.</p>
+      <p style="font-size:.78rem; color:var(--muted); margin-bottom:8px;">Class tags aur Admin tags. Custom tags user ko "Manage Users" se assign karo.</p>
       <div id="tag-list" class="tag-row" style="margin-bottom:14px;"></div>
       <label>Create new tag</label>
       <div style="display:flex; gap:8px; align-items:center;">
@@ -850,7 +744,6 @@ function renderAdmin() {
       </div>
       <div id="grant-msg" class="hide"></div>
     </div>` : ''}
-    <p class="switch-link">Ban/timeout tools abhi is static version mein nahi hain – bolo toh add kar dunga.</p>
   </main>`;
 
   /* --- Send notification --- */
@@ -873,9 +766,6 @@ function renderAdmin() {
     }
     msg.classList.remove('hide');
   };
-
-  /* --- Teacher applications --- */
-  loadTeacherApplications();
 
   /* --- Manage users --- */
   document.getElementById('btn-search-user').onclick = () => adminSearchUser();
@@ -931,8 +821,6 @@ async function loadAdminTags() {
   if (!box) return;
   const predefined = [
     { label: 'Class 1-12 / Pass (all share this color)', color: TAG_COLORS.class },
-    { label: 'Teacher', color: TAG_COLORS.teacher },
-    { label: 'Principal', color: TAG_COLORS.principal },
     { label: 'Admin (admin-only visible)', color: TAG_COLORS.admin },
     { label: 'Student', color: TAG_COLORS.student },
   ];
@@ -971,13 +859,6 @@ async function adminSearchUser() {
           ${ALL_CLASSES.map(c => `<label class="check-row"><input type="checkbox" value="${escapeHtml(c)}" ${classAccess.includes(c) ? 'checked' : ''}> ${escapeHtml(c)}</label>`).join('')}
         </div>
         
-        <label>Role tag</label>
-        <select id="e-roletag">
-          <option value="student" ${!currentTags.includes('teacher-teacher') && !currentTags.includes('principal-principal') ? 'selected' : ''}>Student</option>
-          <option value="teacher" ${currentTags.includes('teacher-teacher') ? 'selected' : ''}>Teacher</option>
-          <option value="principal" ${currentTags.includes('principal-principal') ? 'selected' : ''}>Principal</option>
-        </select>
-        
         <label>Custom tags</label>
         <div class="multi-select" id="e-customtags">
           ${adminCustomTags.length ? adminCustomTags.map(t => `<label class="check-row"><input type="checkbox" value="${escapeHtml(t.id)}" ${currentTags.includes(t.id) ? 'checked' : ''}> ${escapeHtml(t.label)}</label>`).join('') : '<span style="font-size:.78rem; color:var(--muted);">Koi custom tag nahi bana abhi tak.</span>'}
@@ -1008,7 +889,6 @@ async function adminSaveUser(existing) {
     const schoolName = document.getElementById('e-school').value.trim();
     const bio = document.getElementById('e-bio').value.trim();
     const role = document.getElementById('e-role').value;
-    const roleTag = document.getElementById('e-roletag').value; // student | teacher | principal
     
     const classAccess = Array.from(document.querySelectorAll('#admin-user-editor .multi-select input:checked'))
       .map(i => i.value)
@@ -1017,7 +897,7 @@ async function adminSaveUser(existing) {
     const customTagIds = Array.from(document.querySelectorAll('#e-customtags input:checked')).map(i => i.value);
     
     const tags = classAccess.map(c => makeTag(c, 'class'));
-    tags.push(roleTag === 'teacher' ? makeTag('Teacher', 'teacher') : roleTag === 'principal' ? makeTag('Principal', 'principal') : makeTag('Student', 'student'));
+    tags.push(makeTag('Student', 'student')); // Default base tag for everyone
     if (role === 'Admin' || role === 'Owner') tags.push(makeTag(role, 'admin'));
     
     customTagIds.forEach(id => {
@@ -1028,12 +908,8 @@ async function adminSaveUser(existing) {
     const updates = {
       fullName, schoolName, bio, role,
       classAccess: classAccess.length ? classAccess : [existing.classLevel || 'Class 9'],
-      tags,
-      isTeacher: roleTag === 'teacher',
+      tags
     };
-    if (roleTag === 'teacher') {
-      updates.teacherClasses = classAccess.length ? classAccess : (existing.teacherClasses || []);
-    }
     
     await updateDoc(doc(db, "Users", adminEditUid), updates);
     msg.textContent = 'Saved ✅';
@@ -1044,97 +920,6 @@ async function adminSaveUser(existing) {
   }
 }
 window.adminSaveUser = adminSaveUser;
-
-/* --- Teacher applications: list + approve/reject --- */
-async function loadTeacherApplications() {
-  const box = document.getElementById('teacher-apps-list');
-  if (!box) return;
-  try {
-    const snap = await getDocs(query(collection(db, "TeacherApplications"), where("status", "==", "pending")));
-    if (snap.empty) {
-      box.innerHTML = `<p style="font-size:.82rem; color:var(--muted);">Koi pending application nahi hai.</p>`;
-      return;
-    }
-    box.innerHTML = snap.docs.map(d => {
-      const a = d.data();
-      return `
-      <div class="app-item" id="app-${d.id}" style="border-bottom:1px solid var(--line); padding:10px 0;">
-        <b>${escapeHtml(a.name)}</b> <span style="font-size:.75rem; color:var(--muted);">@${escapeHtml(a.username || '')}</span>
-        <p style="font-size:.78rem; margin-top:4px;">School: ${escapeHtml(a.schoolName)}</p>
-        <p style="font-size:.78rem;">Classes: ${a.classes.map(escapeHtml).join(', ')}</p>
-        <p style="font-size:.78rem;">Subjects: ${a.subjects.map(escapeHtml).join(', ')}</p>
-        ${a.idCardPhoto ? `<img src="${a.idCardPhoto}" style="width:100%; max-width:220px; border-radius:8px; margin-top:6px; border:1px solid var(--line);">` : ''}
-        <div style="display:flex; gap:8px; margin-top:8px;">
-          <button class="primary" style="margin-top:0; background:var(--green);" onclick="adminApproveTeacher('${d.id}')">Approve</button>
-          <button class="primary" style="margin-top:0; background:var(--red);" onclick="adminRejectTeacher('${d.id}')">Reject</button>
-        </div>
-      </div>`;
-    }).join('');
-  } catch (e) {
-    box.innerHTML = `<div class="err">Couldn't load applications: ${escapeHtml(e.message)}</div>`;
-  }
-}
-
-async function adminApproveTeacher(appId) {
-  const u = currentUser;
-  try {
-    const appSnap = await getDoc(doc(db, "TeacherApplications", appId));
-    if (!appSnap.exists()) return;
-    const a = appSnap.data();
-    
-    await updateDoc(doc(db, "TeacherApplications", appId), { status: 'approved' });
-    
-    const userSnap = await getDoc(doc(db, "Users", a.uid));
-    const p = userSnap.exists() ? userSnap.data() : {};
-    
-    const existingClassAccess = p.classAccess || [p.classLevel || 'Class 9'];
-    const newClassAccess = [...new Set([...existingClassAccess, ...a.classes])];
-    
-    const newTags = [
-      ...newClassAccess.map(c => makeTag(c, 'class')),
-      makeTag('Teacher', 'teacher'),
-      ...a.subjects.map(s => makeTag(s, 'subject')),
-    ];
-    
-    await updateDoc(doc(db, "Users", a.uid), {
-      isTeacher: true,
-      teacherClasses: [...new Set([...(p.teacherClasses || []), ...a.classes])],
-      classAccess: newClassAccess,
-      tags: newTags,
-    });
-    
-    await addDoc(collection(db, "Notifications"), {
-      toUid: a.uid, title: 'Teacher Application', body: '🎓 You are approved for Teacher!',
-      createdAt: serverTimestamp(), sentBy: u.username
-    });
-    
-    document.getElementById(`app-${appId}`)?.remove();
-  } catch (e) {
-    alert('Approve failed: ' + e.message);
-  }
-}
-window.adminApproveTeacher = adminApproveTeacher;
-
-async function adminRejectTeacher(appId) {
-  const u = currentUser;
-  try {
-    const appSnap = await getDoc(doc(db, "TeacherApplications", appId));
-    if (!appSnap.exists()) return;
-    const a = appSnap.data();
-    
-    await updateDoc(doc(db, "TeacherApplications", appId), { status: 'rejected' });
-    
-    await addDoc(collection(db, "Notifications"), {
-      toUid: a.uid, title: 'Teacher Application', body: '❌ You are rejected for Teacher application.',
-      createdAt: serverTimestamp(), sentBy: u.username
-    });
-    
-    document.getElementById(`app-${appId}`)?.remove();
-  } catch (e) {
-    alert('Reject failed: ' + e.message);
-  }
-}
-window.adminRejectTeacher = adminRejectTeacher;
 
 /* ---------------- 404 ---------------- */
 function renderNotFound() {
