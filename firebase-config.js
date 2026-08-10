@@ -11,12 +11,12 @@ import { getFirestore } from "https://www.gstatic.com/firebasejs/10.8.0/firebase
 // firebaseConfig.js — safe to ship in a static site; access control is
 // enforced by your firestore.rules, not by hiding this object.)
 const firebaseConfig = {
-  apiKey: "AIzaSyB5hBbZRyGtLsJ2kzY8Cu0ugK-YRZKamUI",
-  authDomain: "studenthub-8beaa.firebaseapp.com",
-  projectId: "studenthub-8beaa",
-  storageBucket: "studenthub-8beaa.firebasestorage.app",
-  messagingSenderId: "927692029336",
-  appId: "1:927692029336:web:0dd79be8f099cbda8c3fed"
+  apiKey: "AIzaSyCDLlqMtCGcKfbchKblBNNLec9Y4AkRXL0",
+  authDomain: "student-a866d.firebaseapp.com",
+  projectId: "student-a866d",
+  storageBucket: "student-a866d.firebasestorage.app",
+  messagingSenderId: "742359477068",
+  appId: "1:742359477068:web:0d8481cbd5032428a9fde9"
 };
 
 const app = initializeApp(firebaseConfig);
